@@ -1,0 +1,5 @@
+{
+  "name": "GridSlice Free",
+  "description": "專業影像分割器。照片可分割成網格，精確控制寬高比。非常適合用於社交媒體輪播圖和全景照片。",
+  "requestFramePermissions": []
+}
