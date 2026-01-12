@@ -22,19 +22,264 @@ interface ImageLayer {
   zIndex: number;
 }
 
+type MobileTab = 'layout' | 'layers' | 'settings' | null;
+
 @Component({
   selector: 'app-splitter-editor',
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="h-full flex flex-col-reverse lg:flex-row bg-gray-950">
+    <!-- Main Layout: Column on Mobile, Row on Desktop -->
+    <div class="h-full flex flex-col lg:flex-row bg-gray-950 relative overflow-hidden">
       
-      <!-- Controls Sidebar -->
-      <aside class="w-full lg:w-80 bg-gray-900 border-t lg:border-t-0 lg:border-r border-gray-800 flex flex-col shrink-0 lg:h-full max-h-[50vh] lg:max-h-full overflow-hidden">
-        <div class="p-4 lg:p-6 space-y-6 lg:space-y-8 overflow-y-auto custom-scrollbar">
+      <!-- MOBILE HEADER (lg:hidden) -->
+      <header class="lg:hidden h-14 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-4 shrink-0 z-40 shadow-md">
+        <div class="flex items-center gap-2">
+           <span class="font-bold text-gray-200 tracking-tight">GridSlice</span>
+           <span class="text-[10px] text-gray-500 font-mono border-l border-gray-700 pl-2">
+             {{cols()}}x{{rows()}}
+           </span>
+        </div>
+        <div class="flex items-center gap-3">
+           <!-- Mobile Add Image -->
+           <label class="p-2 bg-gray-800 rounded-full text-blue-400 border border-gray-700 cursor-pointer active:scale-95 transition-transform hover:bg-gray-700">
+              <input type="file" class="hidden" (change)="onAddImages($event)" accept="image/*" multiple>
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+           </label>
+           <!-- Mobile Slice Button -->
+           <button 
+             (click)="generateSlices()"
+             class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-full shadow-lg shadow-blue-900/50 active:scale-95 transition-transform">
+             切割
+           </button>
+        </div>
+      </header>
+
+      <!-- MAIN PREVIEW AREA -->
+      <main class="flex-1 relative bg-gray-950 overflow-hidden flex flex-col w-full h-full min-h-0">
+        
+        <!-- Desktop Header (lg:flex) - Hidden on Mobile -->
+        <div class="hidden lg:flex h-12 border-b border-gray-800 items-center px-4 justify-between bg-gray-900/50 backdrop-blur shrink-0 z-30">
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-400 font-mono">
+              {{ totalWidth() }} × {{ totalHeight() }} px
+            </span>
+            <span class="text-xs text-gray-500 font-mono inline-block border-l border-gray-700 pl-2 ml-1">
+              {{cols()}} x {{rows()}} 網格
+            </span>
+          </div>
+          <div class="flex gap-4 text-xs">
+            <div class="flex items-center gap-1.5">
+               <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+               <span class="text-gray-300">選取</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full border border-dashed border-gray-400"></span>
+              <span class="text-gray-300">切割線</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- The Editor Stage -->
+        @if (!generatedSlices().length) {
           
-          <!-- Add Images Action -->
-          <section>
+          <div class="flex-1 relative overflow-hidden flex items-center justify-center bg-gray-900 select-none cursor-grab active:cursor-grabbing"
+               (mousedown)="bgMouseDown($event)"
+               (wheel)="onWheelZoom($event)">
+               
+            <!-- Mobile Backdrop for Drawer -->
+            @if (activeMobileTab() && windowWidth() < 1024) {
+              <div class="absolute inset-0 bg-black/60 z-30 backdrop-blur-sm transition-opacity" (click)="closeMobileMenu()"></div>
+            }
+            
+            <!-- This container centers the canvas visualization -->
+            <div class="relative flex items-center justify-center w-full h-full p-4 lg:p-8 overflow-hidden">
+            
+                <!-- The Reference Frame (The Canvas) -->
+                <div 
+                  class="relative flex-shrink-0 transition-transform duration-75 ease-out origin-center shadow-2xl"
+                  [style.width.px]="displayDims().width"
+                  [style.height.px]="displayDims().height"
+                  [style.transform]="'scale(' + viewZoom() + ')'">
+                  
+                  <!-- 1. Background -->
+                  <div class="absolute inset-0 z-0 bg-checkerboard"></div>
+                  @if (!isTransparent()) {
+                      <div class="absolute inset-0 z-0" [style.background-color]="backgroundColor()"></div>
+                  }
+
+                  <!-- 2. Images -->
+                  <div class="absolute inset-0 z-10">
+                      @for (layer of layers(); track layer.id) {
+                        <div
+                            class="absolute origin-top-left will-change-transform"
+                            [class.ring-1]="activeLayerId() === layer.id"
+                            [class.ring-blue-400]="activeLayerId() === layer.id"
+                            [style.z-index]="layer.zIndex"
+                            [style.left.px]="layer.x * displayScale()"
+                            [style.top.px]="layer.y * displayScale()"
+                            [style.width.px]="layer.originalWidth * layer.scale * displayScale()"
+                            [style.height.px]="layer.originalHeight * layer.scale * displayScale()"
+                            (mousedown)="startDrag($event, layer.id)"
+                            (touchstart)="startTouch($event, layer.id)">
+                             <img 
+                                [src]="layer.url" 
+                                class="w-full h-full object-contain pointer-events-none"
+                                [class.opacity-50]="activeLayerId() !== layer.id && activeLayerId() !== null"
+                                [class.opacity-100]="activeLayerId() === layer.id || activeLayerId() === null"
+                                alt="layer">
+                        </div>
+                      }
+                  </div>
+
+                   <!-- 3. Mask & Grid -->
+                   <div 
+                      class="absolute inset-0 z-20 pointer-events-none shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] border border-white/20">
+                      <!-- Grid Lines -->
+                      @for (i of colArray(); track i) {
+                        <div 
+                            class="absolute top-0 bottom-0 border-l border-dashed border-white/60 shadow-[0_0_2px_black]" 
+                            [style.left.%]="(i / cols()) * 100"></div>
+                      }
+                      @for (j of rowArray(); track j) {
+                        <div 
+                            class="absolute left-0 right-0 border-t border-dashed border-white/60 shadow-[0_0_2px_black]" 
+                            [style.top.%]="(j / rows()) * 100"></div>
+                      }
+                   </div>
+                   
+                   <!-- Snap Indicators -->
+                   @if(isSnappingX()){
+                     <div class="absolute inset-y-0 w-px bg-yellow-400 z-30 shadow-[0_0_4px_yellow]" 
+                          [style.left.px]="snapXPos() * displayScale()"></div>
+                   }
+                   @if(isSnappingY()){
+                     <div class="absolute inset-x-0 h-px bg-yellow-400 z-30 shadow-[0_0_4px_yellow]" 
+                          [style.top.px]="snapYPos() * displayScale()"></div>
+                   }
+
+                </div>
+            </div>
+            
+            <!-- Floating Hint (Hidden when drawer open on mobile) -->
+            @if (!activeMobileTab()) {
+                <div class="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none z-20">
+                    <div class="text-[10px] lg:text-xs text-gray-400 bg-gray-900/90 px-4 py-1.5 rounded-full backdrop-blur border border-gray-700 shadow-xl">
+                    滑鼠滾輪/手勢縮放視野 • 拖曳圖片可超出範圍
+                    </div>
+                </div>
+            }
+
+          </div>
+        } @else {
+          <!-- Results View -->
+          <div class="flex-1 overflow-y-auto p-4 lg:p-8 bg-gray-950 z-50">
+            <div class="max-w-5xl mx-auto pb-20 lg:pb-0">
+              <div class="flex flex-col gap-6 mb-6">
+                <div>
+                  <h2 class="text-xl lg:text-2xl font-bold text-white">切割完成！</h2>
+                  <p class="text-xs lg:text-sm text-gray-400 mt-1">共 {{ generatedSlices().length }} 張圖片 ({{cellWidth()}} x {{cellHeight()}} px / 張)</p>
+                </div>
+                
+                <div class="flex flex-col gap-2">
+                  <div class="flex gap-3 items-stretch h-12">
+                    <button 
+                      (click)="clearResults()" 
+                      class="flex-1 px-4 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg shadow-lg transition-colors text-sm lg:text-base">
+                      繼續編輯
+                    </button>
+                    <button 
+                      (click)="downloadAll()"
+                      class="flex-[2] px-4 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg shadow-lg flex justify-center items-center gap-2 transition-colors text-sm lg:text-base">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      下載全部 (ZIP)
+                    </button>
+                  </div>
+                  <p class="text-xs text-gray-500 text-center">可直接點擊下方圖片進行單張下載</p>
+                </div>
+              </div>
+              
+              <div 
+                class="grid gap-3 lg:gap-4 bg-checkerboard/30 p-4 rounded-xl border border-gray-800"
+                [style.grid-template-columns]="'repeat(' + cols() + ', minmax(0, 1fr))'">
+                @for (slice of generatedSlices(); track $index) {
+                  <div class="group relative bg-transparent rounded-lg overflow-hidden border border-gray-700/50 w-full shadow-lg" 
+                       style="font-size: 0;"
+                       [style.aspect-ratio]="finalAspectRatio()">
+                    <img [src]="slice" class="w-full h-full object-cover">
+                    <a 
+                      [href]="slice" 
+                      [download]="getDownloadName($index)"
+                      class="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10 text-base">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </a>
+                    <div class="absolute top-1 left-1 lg:top-2 lg:left-2 bg-black/50 text-white text-[10px] lg:text-xs px-1.5 py-0.5 lg:py-1 rounded z-10 font-sans">
+                      #{{ $index + 1 }}
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+        }
+      </main>
+
+      <!-- MOBILE BOTTOM NAV (lg:hidden) -->
+      @if (!generatedSlices().length) {
+        <nav class="lg:hidden h-[60px] bg-gray-900 border-t border-gray-800 grid grid-cols-3 shrink-0 z-50 safe-pb">
+           <button 
+             (click)="setMobileTab('layout')"
+             [class.text-blue-400]="activeMobileTab() === 'layout'"
+             [class.text-gray-400]="activeMobileTab() !== 'layout'"
+             class="flex flex-col items-center justify-center gap-1 active:bg-gray-800/50 transition-colors">
+             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+             <span class="text-[10px] font-medium">佈局</span>
+           </button>
+           <button 
+             (click)="setMobileTab('layers')"
+             [class.text-blue-400]="activeMobileTab() === 'layers'"
+             [class.text-gray-400]="activeMobileTab() !== 'layers'"
+             class="flex flex-col items-center justify-center gap-1 active:bg-gray-800/50 transition-colors relative">
+             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+             <span class="text-[10px] font-medium">圖層</span>
+             @if(layers().length > 0) {
+                 <span class="absolute top-1 right-8 w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+             }
+           </button>
+           <button 
+             (click)="setMobileTab('settings')"
+             [class.text-blue-400]="activeMobileTab() === 'settings'"
+             [class.text-gray-400]="activeMobileTab() !== 'settings'"
+             class="flex flex-col items-center justify-center gap-1 active:bg-gray-800/50 transition-colors">
+             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+             <span class="text-[10px] font-medium">設定</span>
+           </button>
+        </nav>
+      }
+
+      <!-- Controls Panel (Responsive: Sidebar on Desktop, Drawer on Mobile) -->
+      <aside 
+        class="bg-gray-900 border-r border-gray-800 flex flex-col overflow-hidden transition-transform duration-300 ease-out
+               lg:w-80 lg:relative lg:border-t-0 lg:h-full lg:translate-y-0 lg:z-auto
+               fixed bottom-[60px] left-0 right-0 z-40 rounded-t-2xl shadow-2xl border-t border-gray-700
+               max-h-[60vh] w-full"
+        [class.translate-y-[120%]]="!activeMobileTab() && windowWidth() < 1024"
+        [class.translate-y-0]="activeMobileTab() || windowWidth() >= 1024">
+        
+        <!-- Mobile Drawer Header -->
+        <div class="lg:hidden flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-900 sticky top-0 z-10">
+           <span class="text-sm font-bold text-gray-200 flex items-center gap-2">
+             {{ getMobileTabTitle() }}
+           </span>
+           <button (click)="closeMobileMenu()" class="p-1 text-gray-400 hover:text-white bg-gray-800 rounded-full">
+             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+           </button>
+        </div>
+
+        <div class="p-4 lg:p-6 space-y-6 lg:space-y-8 overflow-y-auto custom-scrollbar flex-1 pb-10 lg:pb-6">
+          
+          <!-- Add Images (Desktop Only) -->
+          <section class="hidden lg:block">
              <button 
                 class="w-full py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm text-gray-300 flex items-center justify-center gap-2 mb-2 transition-colors relative overflow-hidden">
                 <input type="file" class="absolute inset-0 opacity-0 cursor-pointer" (change)="onAddImages($event)" accept="image/*" multiple>
@@ -45,8 +290,8 @@ interface ImageLayer {
           </section>
 
           <!-- Main Configuration: Grid & Cell Size -->
-          <section>
-            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 lg:mb-4 flex items-center gap-2">
+          <section [class.hidden]="!shouldShowSection('layout')">
+            <h3 class="hidden lg:flex text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 lg:mb-4 items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
               版面設定 (Layout)
             </h3>
@@ -125,100 +370,112 @@ interface ImageLayer {
                    </div>
                  </div>
               </div>
-
-              <!-- 3. Background Color -->
-              <div>
-                <label class="block text-[10px] text-gray-400 mb-1.5">背景設定</label>
-                <div class="flex items-center gap-3">
-                   <label class="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" [checked]="isTransparent()" (change)="toggleTransparency($event)" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900">
-                      <span class="text-xs text-gray-300">透明背景</span>
-                   </label>
-                   
-                   @if (!isTransparent()) {
-                     <div class="flex items-center gap-2 flex-1 animate-in fade-in zoom-in duration-200">
-                        <input 
-                            type="color" 
-                            [value]="backgroundColor()" 
-                            (input)="updateBackgroundColor($event)"
-                            class="h-6 w-8 p-0 border-0 rounded bg-transparent cursor-pointer">
-                        <span class="text-xs text-gray-400 font-mono uppercase">{{ backgroundColor() }}</span>
-                     </div>
-                   }
-                </div>
-              </div>
-
             </div>
           </section>
 
           <!-- Selected Layer Controls -->
-          @if (activeLayer(); as layer) {
-             <section class="bg-gray-800/50 p-3 rounded-lg border border-blue-900/30 ring-1 ring-blue-900/50">
-                <div class="flex items-center justify-between mb-3">
-                  <h3 class="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
-                     當前圖層
-                  </h3>
-                  <button (click)="removeLayer(layer.id)" class="text-red-400 hover:text-red-300" title="刪除圖層">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                  </button>
-                </div>
-                
-                <div class="space-y-3">
-                  <div>
-                    <div class="flex justify-between mb-1">
-                      <label class="text-[10px] text-gray-400">圖片縮放</label>
-                      <span class="text-[10px] font-mono text-blue-400">{{ (layer.scale * 100).toFixed(0) }}%</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      min="0.05" 
-                      max="3" 
-                      step="0.01" 
-                      [value]="layer.scale" 
-                      (input)="updateLayerScale($event, layer.id)"
-                      class="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500">
-                  </div>
-                  
-                  <div class="flex gap-2">
-                    <button (click)="bringToFront(layer.id)" class="flex-1 py-1.5 text-[10px] bg-gray-700 hover:bg-gray-600 rounded border border-gray-600 text-gray-300">移至最前</button>
-                    <button (click)="sendToBack(layer.id)" class="flex-1 py-1.5 text-[10px] bg-gray-700 hover:bg-gray-600 rounded border border-gray-600 text-gray-300">移至最後</button>
-                  </div>
-                </div>
-             </section>
-          } @else {
-             <section class="p-4 bg-gray-800/30 rounded-lg border border-dashed border-gray-700 text-center">
-               <p class="text-xs text-gray-500">點擊圖片進行編輯</p>
-             </section>
-          }
-
-          <!-- Global View Controls -->
-          <section>
-             <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-               預覽視野 (View)
+          <section [class.hidden]="!shouldShowSection('layers')">
+             <h3 class="hidden lg:flex text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                圖層管理
              </h3>
-             <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
-               <div class="flex justify-between mb-1">
-                  <label class="text-[10px] text-gray-400">視野縮放</label>
-                  <span class="text-[10px] font-mono text-blue-400">{{ (viewZoom() * 100).toFixed(0) }}%</span>
-               </div>
-               <input 
-                  type="range" 
-                  min="0.1" 
-                  max="2.0" 
-                  step="0.05" 
-                  [value]="viewZoom()" 
-                  (input)="updateViewZoom($event)"
-                  class="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-gray-400">
-               <div class="flex justify-between mt-1">
-                 <button (click)="resetViewZoom()" class="text-[10px] text-gray-500 hover:text-white underline">重置視野 (Fit)</button>
-               </div>
+             @if (activeLayer(); as layer) {
+                 <div class="bg-gray-800/50 p-3 rounded-lg border border-blue-900/30 ring-1 ring-blue-900/50">
+                    <div class="flex items-center justify-between mb-3">
+                      <h3 class="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+                         當前圖層
+                      </h3>
+                      <button (click)="removeLayer(layer.id)" class="text-red-400 hover:text-red-300" title="刪除圖層">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                      </button>
+                    </div>
+                    
+                    <div class="space-y-3">
+                      <div>
+                        <div class="flex justify-between mb-1">
+                          <label class="text-[10px] text-gray-400">圖片縮放</label>
+                          <span class="text-[10px] font-mono text-blue-400">{{ (layer.scale * 100).toFixed(0) }}%</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0.05" 
+                          max="3" 
+                          step="0.01" 
+                          [value]="layer.scale" 
+                          (input)="updateLayerScale($event, layer.id)"
+                          class="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                      </div>
+                      
+                      <div class="flex gap-2">
+                        <button (click)="bringToFront(layer.id)" class="flex-1 py-1.5 text-[10px] bg-gray-700 hover:bg-gray-600 rounded border border-gray-600 text-gray-300">移至最前</button>
+                        <button (click)="sendToBack(layer.id)" class="flex-1 py-1.5 text-[10px] bg-gray-700 hover:bg-gray-600 rounded border border-gray-600 text-gray-300">移至最後</button>
+                      </div>
+                    </div>
+                 </div>
+             } @else {
+                 <div class="p-4 bg-gray-800/30 rounded-lg border border-dashed border-gray-700 text-center">
+                   <p class="text-xs text-gray-500">點擊圖片進行編輯</p>
+                 </div>
+             }
+          </section>
+
+          <!-- Settings (Background + View) -->
+          <section [class.hidden]="!shouldShowSection('settings')">
+             <h3 class="hidden lg:flex text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 items-center gap-2">
+               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+               設定 (Settings)
+             </h3>
+
+             <div class="bg-gray-800 p-3 rounded-lg border border-gray-700 space-y-4">
+                 <!-- Background Color -->
+                <div>
+                  <label class="block text-[10px] text-gray-400 mb-1.5">背景設定</label>
+                  <div class="flex items-center gap-3">
+                     <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" [checked]="isTransparent()" (change)="toggleTransparency($event)" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900">
+                        <span class="text-xs text-gray-300">透明背景</span>
+                     </label>
+                     
+                     @if (!isTransparent()) {
+                       <div class="flex items-center gap-2 flex-1 animate-in fade-in zoom-in duration-200">
+                          <input 
+                              type="color" 
+                              [value]="backgroundColor()" 
+                              (input)="updateBackgroundColor($event)"
+                              class="h-6 w-8 p-0 border-0 rounded bg-transparent cursor-pointer">
+                          <span class="text-xs text-gray-400 font-mono uppercase">{{ backgroundColor() }}</span>
+                       </div>
+                     }
+                  </div>
+                </div>
+
+                <div class="h-px bg-gray-700"></div>
+
+                <!-- Global View Controls -->
+                <div>
+                   <div class="flex justify-between mb-1">
+                      <label class="text-[10px] text-gray-400">視野縮放</label>
+                      <span class="text-[10px] font-mono text-blue-400">{{ (viewZoom() * 100).toFixed(0) }}%</span>
+                   </div>
+                   <input 
+                      type="range" 
+                      min="0.1" 
+                      max="2.0" 
+                      step="0.05" 
+                      [value]="viewZoom()" 
+                      (input)="updateViewZoom($event)"
+                      class="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-gray-400">
+                   <div class="flex justify-between mt-1">
+                     <button (click)="resetViewZoom()" class="text-[10px] text-gray-500 hover:text-white underline">重置視野 (Fit)</button>
+                   </div>
+                </div>
              </div>
           </section>
 
-          <!-- Action -->
+          <!-- Action (Desktop Only) -->
           <button 
             (click)="generateSlices()"
-            class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg shadow-lg shadow-blue-900/50 transition-all transform active:scale-95 flex items-center justify-center gap-2 text-sm lg:text-base">
+            class="hidden lg:flex w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg shadow-lg shadow-blue-900/50 transition-all transform active:scale-95 items-center justify-center gap-2 text-sm lg:text-base">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19c0-1.7-1.3-3-3-3h-11"/><path d="M13 22l4.5-3L13 16"/><path d="M6 16V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v7"/></svg>
             開始切割圖片
           </button>
@@ -227,166 +484,6 @@ interface ImageLayer {
         </div>
       </aside>
 
-      <!-- Main Preview / Results Area -->
-      <main class="flex-1 relative bg-gray-950 overflow-hidden flex flex-col min-h-0">
-        
-        <!-- Viewport Header -->
-        <div class="h-10 lg:h-12 border-b border-gray-800 flex items-center px-4 justify-between bg-gray-900/50 backdrop-blur shrink-0 z-30">
-          <div class="flex items-center gap-2">
-            <span class="text-[10px] lg:text-xs text-gray-400 font-mono">
-              {{ totalWidth() }} × {{ totalHeight() }} px
-            </span>
-            <span class="text-[10px] text-gray-500 font-mono hidden sm:inline-block border-l border-gray-700 pl-2 ml-1">
-              {{cols()}} x {{rows()}} 網格
-            </span>
-          </div>
-          <div class="flex gap-4 text-[10px] lg:text-xs">
-            <div class="flex items-center gap-1.5">
-               <span class="w-1.5 h-1.5 lg:w-2 lg:h-2 rounded-full bg-blue-500"></span>
-               <span class="text-gray-300">選取</span>
-            </div>
-            <div class="flex items-center gap-1.5">
-              <span class="w-1.5 h-1.5 lg:w-2 lg:h-2 rounded-full border border-dashed border-gray-400"></span>
-              <span class="text-gray-300">切割線</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- The Editor Stage -->
-        @if (!generatedSlices().length) {
-          
-          <div class="flex-1 relative overflow-hidden flex items-center justify-center bg-gray-900 select-none cursor-grab active:cursor-grabbing"
-               (mousedown)="bgMouseDown($event)"
-               (wheel)="onWheelZoom($event)">
-            
-            <!-- This container centers the canvas visualization -->
-            <!-- We apply viewZoom to this container's children -->
-            <div class="relative flex items-center justify-center w-full h-full p-8 overflow-hidden">
-            
-                <!-- The Reference Frame (The Canvas) -->
-                <div 
-                  class="relative flex-shrink-0 transition-transform duration-75 ease-out origin-center"
-                  [style.width.px]="displayDims().width"
-                  [style.height.px]="displayDims().height"
-                  [style.transform]="'scale(' + viewZoom() + ')'">
-                  
-                  <!-- 1. Background (Checkerboard + Color) - Z: 0 -->
-                  <div class="absolute inset-0 z-0 bg-checkerboard"></div>
-                  @if (!isTransparent()) {
-                      <div class="absolute inset-0 z-0" [style.background-color]="backgroundColor()"></div>
-                  }
-
-                  <!-- 2. The Image Layer Container - Z: 10 -->
-                  <!-- Images sit ON TOP of the checkerboard/color -->
-                  <div class="absolute inset-0 z-10">
-                      @for (layer of layers(); track layer.id) {
-                        <div
-                            class="absolute origin-top-left will-change-transform"
-                            [class.ring-1]="activeLayerId() === layer.id"
-                            [class.ring-blue-400]="activeLayerId() === layer.id"
-                            [style.z-index]="layer.zIndex"
-                            [style.left.px]="layer.x * displayScale()"
-                            [style.top.px]="layer.y * displayScale()"
-                            [style.width.px]="layer.originalWidth * layer.scale * displayScale()"
-                            [style.height.px]="layer.originalHeight * layer.scale * displayScale()"
-                            (mousedown)="startDrag($event, layer.id)"
-                            (touchstart)="startTouch($event, layer.id)">
-                             <img 
-                                [src]="layer.url" 
-                                class="w-full h-full object-contain pointer-events-none"
-                                [class.opacity-50]="activeLayerId() !== layer.id && activeLayerId() !== null"
-                                [class.opacity-100]="activeLayerId() === layer.id || activeLayerId() === null"
-                                alt="layer">
-                        </div>
-                      }
-                  </div>
-
-                   <!-- 3. The Mask & Grid Overlay (Top Layer) - Z: 20 -->
-                   <!-- 
-                       This sits exactly on the canvas dimensions.
-                       Box-shadow opacity changed from 0.8 to 0.5 for better visibility outside.
-                   -->
-                   <div 
-                      class="absolute inset-0 z-20 pointer-events-none shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] border border-white/20">
-                      <!-- Grid Lines -->
-                      @for (i of colArray(); track i) {
-                        <div 
-                            class="absolute top-0 bottom-0 border-l border-dashed border-white/60 shadow-[0_0_2px_black]" 
-                            [style.left.%]="(i / cols()) * 100"></div>
-                      }
-                      @for (j of rowArray(); track j) {
-                        <div 
-                            class="absolute left-0 right-0 border-t border-dashed border-white/60 shadow-[0_0_2px_black]" 
-                            [style.top.%]="(j / rows()) * 100"></div>
-                      }
-                   </div>
-                   
-                   <!-- Snap Indicators - Z: 30 -->
-                   @if(isSnappingX()){
-                     <div class="absolute inset-y-0 w-px bg-yellow-400 z-30 shadow-[0_0_4px_yellow]" 
-                          [style.left.px]="snapXPos() * displayScale()"></div>
-                   }
-                   @if(isSnappingY()){
-                     <div class="absolute inset-x-0 h-px bg-yellow-400 z-30 shadow-[0_0_4px_yellow]" 
-                          [style.top.px]="snapYPos() * displayScale()"></div>
-                   }
-
-                </div>
-            </div>
-            
-            <div class="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none z-40">
-                <div class="text-[10px] lg:text-xs text-gray-400 bg-gray-900/90 px-4 py-1.5 rounded-full backdrop-blur border border-gray-700 shadow-xl">
-                 滑鼠滾輪縮放視野 • 拖曳圖片可超出範圍
-                </div>
-            </div>
-
-          </div>
-        } @else {
-          <!-- Results View -->
-          <div class="flex-1 overflow-y-auto p-4 lg:p-8 bg-gray-950">
-            <div class="max-w-5xl mx-auto">
-              <div class="flex flex-col lg:flex-row lg:items-center justify-between mb-6 gap-4">
-                <div>
-                  <h2 class="text-xl lg:text-2xl font-bold text-white">切割完成！</h2>
-                  <p class="text-xs lg:text-sm text-gray-400 mt-1">共 {{ generatedSlices().length }} 張圖片 ({{cellWidth()}} x {{cellHeight()}} px / 張)</p>
-                </div>
-                <div class="flex gap-3 items-center">
-                  <button (click)="clearResults()" class="text-xs lg:text-sm text-gray-400 hover:text-white underline">重設</button>
-                  <button 
-                    (click)="downloadAll()"
-                    class="flex-1 lg:flex-none px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm font-bold rounded-lg shadow-lg flex justify-center items-center gap-2 transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    下載全部 (ZIP)
-                  </button>
-                </div>
-              </div>
-              
-              <!-- Checkered background for results too if transparent -->
-              <div 
-                class="grid gap-3 lg:gap-4 bg-checkerboard/30 p-4 rounded-xl border border-gray-800"
-                [style.grid-template-columns]="'repeat(' + cols() + ', minmax(0, 1fr))'">
-                @for (slice of generatedSlices(); track $index) {
-                  <div class="group relative bg-transparent rounded-lg overflow-hidden border border-gray-700/50 w-full shadow-lg" 
-                       style="font-size: 0;"
-                       [style.aspect-ratio]="finalAspectRatio()">
-                    <img [src]="slice" class="w-full h-full object-cover">
-                    <a 
-                      [href]="slice" 
-                      [download]="getDownloadName($index)"
-                      class="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10 text-base">
-                      <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    </a>
-                    <div class="absolute top-1 left-1 lg:top-2 lg:left-2 bg-black/50 text-white text-[10px] lg:text-xs px-1.5 py-0.5 lg:py-1 rounded z-10 font-sans">
-                      #{{ $index + 1 }}
-                    </div>
-                  </div>
-                }
-              </div>
-            </div>
-          </div>
-        }
-      </main>
-      
     </div>
   `
 })
@@ -397,6 +494,9 @@ export class SplitterEditorComponent implements OnDestroy {
   layers = signal<ImageLayer[]>([]);
   activeLayerId = signal<string | null>(null);
   
+  // Mobile UI State
+  activeMobileTab = signal<MobileTab>(null);
+
   // Configuration: Cell Size & Ratio
   cellWidth = signal(1080);
   cellHeight = signal(1080);
@@ -469,13 +569,19 @@ export class SplitterEditorComponent implements OnDestroy {
      const winW = this.windowWidth();
      const winH = this.windowHeight();
      
-     // Available space
-     const maxW = Math.min(1200, winW - 48); 
+     // Available space logic updated for RWD
      const isMobile = winW < 1024;
-     const maxH = isMobile ? (winH * 0.55) : (winH - 160);
+     
+     // Desktop: Sidebar width 320px (80)
+     // Mobile: Full width
+     const availableW = isMobile ? winW : (winW - 320 - 48);
+     
+     // Desktop: Header 48px + Padding
+     // Mobile: Header 56px + Nav 64px = 120px approx taken
+     const availableH = isMobile ? (winH - 120) : (winH - 100);
 
-     const scaleW = maxW / cw;
-     const scaleH = maxH / ch;
+     const scaleW = (availableW - 40) / cw; // 20px padding
+     const scaleH = (availableH - 40) / ch;
      
      return Math.min(scaleW, scaleH);
   });
@@ -509,6 +615,33 @@ export class SplitterEditorComponent implements OnDestroy {
         window.removeEventListener('resize', this.resizeListener);
     }
   }
+
+  // --- Mobile RWD Logic ---
+
+  setMobileTab(tab: MobileTab) {
+    this.activeMobileTab.set(tab);
+  }
+
+  closeMobileMenu() {
+    this.activeMobileTab.set(null);
+  }
+
+  shouldShowSection(section: string) {
+    const isDesktop = this.windowWidth() >= 1024;
+    if (isDesktop) return true;
+    return this.activeMobileTab() === section;
+  }
+
+  getMobileTabTitle() {
+      switch(this.activeMobileTab()) {
+          case 'layout': return '版面佈局 (Layout)';
+          case 'layers': return '圖層管理 (Layers)';
+          case 'settings': return '顯示設定 (Settings)';
+          default: return '';
+      }
+  }
+
+  // --- File Processing ---
 
   processNewFiles(files: File[]) {
     let loadedCount = 0;
@@ -672,6 +805,10 @@ export class SplitterEditorComponent implements OnDestroy {
   
   bgMouseDown(e: MouseEvent) {
       this.activeLayerId.set(null);
+      // Close mobile menu if open when clicking bg
+      if (this.windowWidth() < 1024) {
+          this.closeMobileMenu();
+      }
   }
   
   updateLayerScale(e: Event, id: string) {
