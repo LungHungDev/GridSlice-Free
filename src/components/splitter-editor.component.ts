@@ -36,8 +36,8 @@ type MobileTab = 'layout' | 'layers' | 'settings' | null;
       <!-- ========================================== -->
       
       <!-- 1. Watermark Title (Fixed Top Left) -->
-      <div class="lg:hidden absolute top-4 left-4 z-40 pointer-events-none select-none">
-        <h1 class="text-xl font-black text-white/30 tracking-tighter">GridSlice Free</h1>
+      <div class="lg:hidden absolute top-12 left-6 z-40 pointer-events-none select-none">
+        <h1 class="text-xl font-black text-white/10 tracking-tighter">GridSlice Free</h1>
       </div>
 
       <!-- 2. Slice/Export FAB (Fixed Top Right) -->
@@ -178,47 +178,40 @@ type MobileTab = 'layout' | 'layers' | 'settings' | null;
       <!-- DESKTOP / SHARED EDITOR AREA               -->
       <!-- ========================================== -->
 
-      <main class="flex-1 relative bg-gray-950 overflow-hidden flex flex-col w-full h-full min-h-0">
+      <main class="flex-1 relative bg-gray-900 overflow-hidden flex flex-col w-full h-full min-h-0">
         
         <!-- Desktop Header (lg:flex) -->
-        <div class="hidden lg:flex h-12 border-b border-gray-800 items-center px-4 justify-between bg-gray-900/50 backdrop-blur shrink-0 z-30">
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-gray-400 font-mono">
-              {{ totalWidth() }} × {{ totalHeight() }} px
-            </span>
-            <span class="text-xs text-gray-500 font-mono inline-block border-l border-gray-700 pl-2 ml-1">
-              {{cols()}} x {{rows()}} 網格
-            </span>
+        <div class="hidden lg:flex h-12 border-b border-gray-800 items-center px-4 justify-between bg-gray-900/50 backdrop-blur shrink-0 z-30 absolute top-0 left-0 right-0 pointer-events-none">
+          <div class="flex items-center gap-2 pointer-events-auto">
+             <!-- Info Only -->
           </div>
-          <div class="flex gap-4 text-xs">
-            <div class="flex items-center gap-1.5">
-               <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-               <span class="text-gray-300">選取</span>
-            </div>
-            <div class="flex items-center gap-1.5">
-              <span class="w-2 h-2 rounded-full border border-dashed border-gray-400"></span>
-              <span class="text-gray-300">切割線</span>
-            </div>
+          <div class="flex gap-4 text-xs pointer-events-auto">
+             <!-- Status Only -->
           </div>
         </div>
 
         <!-- The Editor Stage -->
         @if (!generatedSlices().length) {
           
-          <div class="flex-1 relative overflow-hidden flex items-center justify-center bg-gray-900 select-none cursor-grab active:cursor-grabbing touch-none"
+          <div class="flex-1 relative overflow-hidden flex items-center justify-center bg-gray-950 select-none cursor-grab active:cursor-grabbing touch-none"
                (mousedown)="bgMouseDown($event)"
                (wheel)="onWheelZoom($event)"
                (touchstart)="onContainerTouchStart($event)"
                (touchmove)="onContainerTouchMove($event)"
                (touchend)="onContainerTouchEnd($event)">
-               
+            
+            <!-- Dark Checkerboard Background (Outside the Canvas) -->
+            <div class="absolute inset-0 z-0 bg-gray-950 opacity-100 pointer-events-none">
+               <div class="absolute inset-0 bg-checkerboard opacity-20"></div>
+            </div>
+
             <!-- Mobile Backdrop (Invisible but closes menu) -->
             @if (activeMobileTab() && windowWidth() < 1024) {
-              <div class="absolute inset-0 z-30" (touchstart)="closeMobileMenu()"></div>
+              <div class="absolute inset-0 z-30" (touchstart)="closeMobileMenu()" (mousedown)="closeMobileMenu()"></div>
             }
             
             <!-- Editor View -->
-            <div class="relative flex items-center justify-center w-full h-full p-4 lg:p-8 overflow-visible"
+            <div class="relative flex items-center justify-center w-full h-full p-4 lg:p-8 overflow-visible z-10"
                  [style.transform]="'translate(' + viewTranslateX() + 'px, ' + viewTranslateY() + 'px)'">
             
                 <div 
@@ -227,7 +220,7 @@ type MobileTab = 'layout' | 'layers' | 'settings' | null;
                   [style.height.px]="displayDims().height"
                   [style.transform]="'scale(' + viewZoom() + ')'">
                   
-                  <!-- Background -->
+                  <!-- Canvas Background -->
                   <div class="absolute inset-0 z-0 bg-checkerboard"></div>
                   @if (!isTransparent()) {
                       <div class="absolute inset-0 z-0" [style.background-color]="backgroundColor()"></div>
@@ -480,8 +473,8 @@ export class SplitterEditorComponent implements OnDestroy {
   cols = signal(2);
 
   // Background Settings
-  isTransparent = signal(false);
-  backgroundColor = signal('#ffffff'); // Default white for non-transparent
+  isTransparent = signal(true); // Default to Transparent
+  backgroundColor = signal('#ffffff'); 
 
   // View Control
   viewZoom = signal(1.0);
@@ -561,6 +554,8 @@ export class SplitterEditorComponent implements OnDestroy {
   });
 
   private resizeListener: () => void;
+  private mouseMoveListener: (e: MouseEvent) => void;
+  private mouseUpListener: (e: MouseEvent) => void;
 
   constructor() {
     this.resizeListener = () => {
@@ -568,6 +563,12 @@ export class SplitterEditorComponent implements OnDestroy {
         this.windowHeight.set(window.innerHeight);
     };
     window.addEventListener('resize', this.resizeListener);
+
+    // Global listeners for dragging behavior
+    this.mouseMoveListener = (e: MouseEvent) => this.globalMouseMove(e);
+    this.mouseUpListener = (e: MouseEvent) => this.globalMouseUp(e);
+    document.addEventListener('mousemove', this.mouseMoveListener);
+    document.addEventListener('mouseup', this.mouseUpListener);
 
     effect(() => {
       const files = this.initialFiles();
@@ -578,9 +579,9 @@ export class SplitterEditorComponent implements OnDestroy {
   }
 
   ngOnDestroy() {
-    if (this.resizeListener) {
-        window.removeEventListener('resize', this.resizeListener);
-    }
+    if (this.resizeListener) window.removeEventListener('resize', this.resizeListener);
+    if (this.mouseMoveListener) document.removeEventListener('mousemove', this.mouseMoveListener);
+    if (this.mouseUpListener) document.removeEventListener('mouseup', this.mouseUpListener);
   }
 
   // --- Mobile RWD Logic ---
@@ -768,17 +769,30 @@ export class SplitterEditorComponent implements OnDestroy {
       }
   }
   
+  isViewDragging = false;
+  
   bgMouseDown(e: MouseEvent) {
       this.activeLayerId.set(null);
       if (this.windowWidth() < 1024) {
           this.closeMobileMenu();
       }
+      
+      // Desktop View Drag Start
+      this.isViewDragging = true;
   }
   
   updateLayerScale(e: Event, id: string) {
       const val = parseFloat((e.target as HTMLInputElement).value);
+      
+      // Check for snap (only if scaling via slider, we assume center scaling is fine or we just scale w/o position shift)
+      // Actually, we want to snap edges if they are close.
+      const layer = this.layers().find(l => l.id === id);
+      if (!layer) return;
+
+      const finalScale = this.applyScaleSnapping(layer, val);
+      
       this.layers.update(ls => ls.map(l => {
-          if (l.id === id) return { ...l, scale: val };
+          if (l.id === id) return { ...l, scale: finalScale };
           return l;
       }));
   }
@@ -798,7 +812,7 @@ export class SplitterEditorComponent implements OnDestroy {
   }
 
   // --- Interaction Logic (Mouse) ---
-  isDragging = false;
+  isLayerDragging = false;
   dragStart = { x: 0, y: 0 };
   dragLayerStart = { x: 0, y: 0 };
   dragLayerId: string | null = null;
@@ -809,32 +823,35 @@ export class SplitterEditorComponent implements OnDestroy {
     
     this.activeLayerId.set(id);
     this.dragLayerId = id;
-    this.isDragging = true;
+    this.isLayerDragging = true;
     
     const layer = this.layers().find(l => l.id === id);
     if (!layer) return;
 
     this.dragStart = { x: e.clientX, y: e.clientY };
     this.dragLayerStart = { x: layer.x, y: layer.y };
-    
-    const mouseMove = (ev: MouseEvent) => {
-      if (!this.isDragging || !this.dragLayerId) return;
-      const dx = ev.clientX - this.dragStart.x;
-      const dy = ev.clientY - this.dragStart.y;
-      this.handleDragMove(dx, dy);
-    };
-    
-    const mouseUp = () => {
-      this.isDragging = false;
+  }
+  
+  globalMouseMove(e: MouseEvent) {
+      // 1. Layer Drag
+      if (this.isLayerDragging && this.dragLayerId) {
+          const dx = e.clientX - this.dragStart.x;
+          const dy = e.clientY - this.dragStart.y;
+          this.handleDragMove(dx, dy);
+      }
+      // 2. View Drag (Desktop Background)
+      else if (this.isViewDragging) {
+          this.viewTranslateX.update(v => v + e.movementX);
+          this.viewTranslateY.update(v => v + e.movementY);
+      }
+  }
+  
+  globalMouseUp(e: MouseEvent) {
+      this.isLayerDragging = false;
+      this.isViewDragging = false;
       this.dragLayerId = null;
       this.isSnappingX.set(false);
       this.isSnappingY.set(false);
-      document.removeEventListener('mousemove', mouseMove);
-      document.removeEventListener('mouseup', mouseUp);
-    };
-    
-    document.addEventListener('mousemove', mouseMove);
-    document.addEventListener('mouseup', mouseUp);
   }
 
   // --- Interaction Logic (Touch) ---
@@ -850,7 +867,11 @@ export class SplitterEditorComponent implements OnDestroy {
   touchStartCoords = { x: 0, y: 0 }; // For Panning
   lastPinchDistance = 0;
   startZoom = 1;         // For View Zoom
-  startLayerScale = 1;   // For Layer Zoom
+  
+  // For Layer Pinch
+  startLayerScale = 1;   
+  pinchCenterStart = { x: 0, y: 0 }; // Canvas coordinates of the initial pinch center
+  layerPosStart = { x: 0, y: 0 };    // Layer X/Y at start of pinch
   
   // Helps identify if a touch started on a layer
   potentialDragLayerId: string | null = null;
@@ -873,7 +894,11 @@ export class SplitterEditorComponent implements OnDestroy {
           // If we started touching a layer, we zoom THAT layer
           this.zoomTarget = 'layer';
           const layer = this.layers().find(l => l.id === this.potentialDragLayerId);
-          this.startLayerScale = layer ? layer.scale : 1;
+          if (layer) {
+              this.startLayerScale = layer.scale;
+              this.layerPosStart = { x: layer.x, y: layer.y };
+              this.pinchCenterStart = this.getCanvasPointFromTouches(e.touches);
+          }
        } else {
           // Otherwise zoom view
           this.zoomTarget = 'view';
@@ -909,6 +934,7 @@ export class SplitterEditorComponent implements OnDestroy {
     if (this.isTouchZooming && e.touches.length === 2) {
        e.preventDefault();
        const currentDist = this.getDistance(e.touches);
+       
        if (this.lastPinchDistance > 0) {
           const scaleChange = currentDist / this.lastPinchDistance;
           
@@ -917,11 +943,37 @@ export class SplitterEditorComponent implements OnDestroy {
              const newZoom = Math.max(0.1, Math.min(2.0, this.startZoom * scaleChange));
              this.viewZoom.set(newZoom);
           } else if (this.zoomTarget === 'layer' && this.potentialDragLayerId) {
-             // Zoom Layer
-             const newScale = Math.max(0.05, Math.min(5.0, this.startLayerScale * scaleChange));
-             this.layers.update(ls => ls.map(l => 
-                l.id === this.potentialDragLayerId ? { ...l, scale: newScale } : l
-             ));
+             // Zoom Layer (Center Pivot)
+             const layer = this.layers().find(l => l.id === this.potentialDragLayerId);
+             if (layer) {
+                 const rawNewScale = this.startLayerScale * scaleChange;
+                 // Snap scale if edges hit something
+                 const newScale = this.applyScaleSnapping(layer, Math.max(0.05, Math.min(5.0, rawNewScale)));
+                 
+                 // Pivot Math:
+                 // P_current = Center of Fingers (Canvas Space)
+                 // P_start = pinchCenterStart
+                 // V = P_start - LayerOrigin_Start
+                 // LayerOrigin_New = P_current - V * (NewScale / OldScale)
+                 // NOTE: Since fingers move, P_current != P_start.
+                 
+                 const currentPinchCenter = this.getCanvasPointFromTouches(e.touches);
+                 
+                 // Vector from Layer Origin (at start) to Pinch Center (at start)
+                 const vectorX = this.pinchCenterStart.x - this.layerPosStart.x;
+                 const vectorY = this.pinchCenterStart.y - this.layerPosStart.y;
+                 
+                 // Scale this vector by the relative growth
+                 const relativeScale = newScale / this.startLayerScale;
+                 
+                 // New Position is current finger center minus the scaled vector
+                 const newLayerX = currentPinchCenter.x - (vectorX * relativeScale);
+                 const newLayerY = currentPinchCenter.y - (vectorY * relativeScale);
+
+                 this.layers.update(ls => ls.map(l => 
+                    l.id === this.potentialDragLayerId ? { ...l, scale: newScale, x: newLayerX, y: newLayerY } : l
+                 ));
+             }
           }
        }
        return;
@@ -965,6 +1017,64 @@ export class SplitterEditorComponent implements OnDestroy {
      const dy = touches[0].clientY - touches[1].clientY;
      return Math.hypot(dx, dy);
   }
+  
+  // Helper to convert screen points to Canvas Coordinates (considering view translate & scale)
+  getCanvasPointFromTouches(touches: TouchList) {
+      // Average point of two touches
+      const screenX = (touches[0].clientX + touches[1].clientX) / 2;
+      const screenY = (touches[0].clientY + touches[1].clientY) / 2;
+      return this.screenToCanvas(screenX, screenY);
+  }
+
+  screenToCanvas(sx: number, sy: number) {
+      // 1. Subtract Translate
+      // 2. Divide by View Zoom
+      // 3. Subtract Display Offset (which is the centering padding) 
+      // But wait, the layers are positioned relative to the "Canvas Container" (0,0 of the .relative div).
+      // The canvas container is centered in the viewport.
+      // So we need to find where the .relative div is on screen.
+      
+      // Since we use Angular Signals and direct style binding, getting exact element rect might be slightly async or require ViewChild.
+      // However, we can approximate:
+      // Global Translate: viewTranslateX, viewTranslateY
+      // Then the container is centered.
+      // Let's assume the View Container (.relative.flex... overflow-visible) is effectively the viewport origin (plus translate).
+      // Actually, standard drag logic uses delta, so absolute math is tricky without `getBoundingClientRect`.
+      
+      // SIMPLIFICATION:
+      // We only need DELTAs for drag, but for Pivot Zoom we need RELATIVE position.
+      // Let's use the active layer's current position to offset.
+      
+      // Let's rely on the DOM element for the canvas wrapper to get robust coordinates.
+      // Since I can't easily inject ElementRef in this output format without changing more files,
+      // I will calculate relative to the window center which aligns with our CSS centering.
+      
+      const winW = this.windowWidth();
+      const winH = this.windowHeight();
+      
+      // Container Center (before translate)
+      const cx = winW / 2;
+      const cy = winH / 2;
+      
+      // Apply Translate
+      const originX = cx + this.viewTranslateX();
+      const originY = cy + this.viewTranslateY();
+      
+      // Display Dims
+      const dims = this.displayDims();
+      const canvasLeft = originX - (dims.width / 2);
+      const canvasTop = originY - (dims.height / 2);
+      
+      // Coordinate inside the scaled canvas
+      const relX = (sx - canvasLeft) / this.viewZoom();
+      const relY = (sy - canvasTop) / this.viewZoom();
+      
+      // Coordinate inside the unscaled canvas (Layer Space)
+      return { 
+          x: relX / this.displayScale(), 
+          y: relY / this.displayScale() 
+      };
+  }
 
   handleDragMove(dxScreen: number, dyScreen: number) {
     if (!this.dragLayerId) return;
@@ -989,13 +1099,49 @@ export class SplitterEditorComponent implements OnDestroy {
     let snappedY = false;
     let sx = 0, sy = 0;
 
-    if (Math.abs(nx) < SNAP_DIST) { nx = 0; snappedX = true; sx = 0; }
-    else if (Math.abs(nx + currentW - cw) < SNAP_DIST) { nx = cw - currentW; snappedX = true; sx = cw; }
-    else if (Math.abs((nx + currentW/2) - (cw/2)) < SNAP_DIST) { nx = cw/2 - currentW/2; snappedX = true; sx = cw/2; }
+    // --- X Axis Snapping ---
+    // Targets: 0, TotalWidth, AND Grid Lines
+    const snapTargetsX = [0, cw];
+    for (let i = 1; i < this.cols(); i++) {
+        snapTargetsX.push((i / this.cols()) * cw);
+    }
+    
+    // Check Left Edge
+    for (const target of snapTargetsX) {
+        if (Math.abs(nx - target) < SNAP_DIST) { nx = target; snappedX = true; sx = target; break; }
+    }
+    // Check Right Edge (if not snapped)
+    if (!snappedX) {
+        for (const target of snapTargetsX) {
+            if (Math.abs(nx + currentW - target) < SNAP_DIST) { nx = target - currentW; snappedX = true; sx = target; break; }
+        }
+    }
+    // Check Center (if not snapped)
+    if (!snappedX) {
+        for (const target of snapTargetsX) {
+            if (Math.abs(nx + currentW/2 - target) < SNAP_DIST) { nx = target - currentW/2; snappedX = true; sx = target; break; }
+        }
+    }
 
-    if (Math.abs(ny) < SNAP_DIST) { ny = 0; snappedY = true; sy = 0; }
-    else if (Math.abs(ny + currentH - ch) < SNAP_DIST) { ny = ch - currentH; snappedY = true; sy = ch; }
-    else if (Math.abs((ny + currentH/2) - (ch/2)) < SNAP_DIST) { ny = ch/2 - currentH/2; snappedY = true; sy = ch/2; }
+    // --- Y Axis Snapping ---
+    const snapTargetsY = [0, ch];
+    for (let j = 1; j < this.rows(); j++) {
+        snapTargetsY.push((j / this.rows()) * ch);
+    }
+    
+    for (const target of snapTargetsY) {
+        if (Math.abs(ny - target) < SNAP_DIST) { ny = target; snappedY = true; sy = target; break; }
+    }
+    if (!snappedY) {
+        for (const target of snapTargetsY) {
+            if (Math.abs(ny + currentH - target) < SNAP_DIST) { ny = target - currentH; snappedY = true; sy = target; break; }
+        }
+    }
+    if (!snappedY) {
+        for (const target of snapTargetsY) {
+            if (Math.abs(ny + currentH/2 - target) < SNAP_DIST) { ny = target - currentH/2; snappedY = true; sy = target; break; }
+        }
+    }
     
     this.isSnappingX.set(snappedX);
     this.isSnappingY.set(snappedY);
@@ -1006,6 +1152,74 @@ export class SplitterEditorComponent implements OnDestroy {
         if (l.id === this.dragLayerId) return { ...l, x: nx, y: ny };
         return l;
     }));
+  }
+
+  // Snapping logic when scaling (Snap Edges to Grid/Canvas Border)
+  applyScaleSnapping(layer: ImageLayer, newScale: number): number {
+      const cw = this.totalWidth();
+      const ch = this.totalHeight();
+      const currentW = layer.originalWidth * newScale;
+      const currentH = layer.originalHeight * newScale;
+      const x = layer.x;
+      const y = layer.y;
+      
+      const SNAP_TOLERANCE_PX = 10;
+      
+      // Targets X
+      const snapTargetsX = [0, cw];
+      for (let i = 1; i < this.cols(); i++) snapTargetsX.push((i / this.cols()) * cw);
+
+      // Targets Y
+      const snapTargetsY = [0, ch];
+      for (let j = 1; j < this.rows(); j++) snapTargetsY.push((j / this.rows()) * ch);
+      
+      let snappedScale = newScale;
+      let minDiff = Number.MAX_VALUE;
+
+      // Check Right Edge Snapping: (x + w) ~ target
+      // w = origW * s  =>  s = (target - x) / origW
+      for (const target of snapTargetsX) {
+         if (target > x) { // Only snap if target is to the right
+             const targetScale = (target - x) / layer.originalWidth;
+             // Check if this targetScale is close to newScale
+             const diff = Math.abs(targetScale - newScale);
+             // Convert diff back to pixels to check tolerance
+             const pixelDiff = diff * layer.originalWidth;
+             
+             if (pixelDiff < SNAP_TOLERANCE_PX && diff < minDiff) {
+                 minDiff = diff;
+                 snappedScale = targetScale;
+                 this.isSnappingX.set(true);
+                 this.snapXPos.set(target);
+             }
+         }
+      }
+
+      // Check Bottom Edge Snapping: (y + h) ~ target
+      // s = (target - y) / origH
+      for (const target of snapTargetsY) {
+          if (target > y) {
+              const targetScale = (target - y) / layer.originalHeight;
+              const diff = Math.abs(targetScale - newScale);
+              const pixelDiff = diff * layer.originalHeight;
+              
+              if (pixelDiff < SNAP_TOLERANCE_PX && diff < minDiff) {
+                  minDiff = diff;
+                  snappedScale = targetScale;
+                  this.isSnappingY.set(true);
+                  this.snapYPos.set(target);
+                  this.isSnappingX.set(false); // Prioritize Y visual if it overrides (simple toggle)
+              }
+          }
+      }
+      
+      if (minDiff === Number.MAX_VALUE) {
+          // No snap
+          this.isSnappingX.set(false);
+          this.isSnappingY.set(false);
+      }
+
+      return snappedScale;
   }
 
   clearResults() {
