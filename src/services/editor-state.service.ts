@@ -133,4 +133,18 @@ export class EditorStateService {
     this.viewTranslateX.set(0);
     this.viewTranslateY.set(0);
   }
+
+  resetAll() {
+    this.layers.set([]);
+    this.activeLayerId.set(null);
+    this.generatedSlices.set([]);
+    this.resetView();
+    // Reset to defaults
+    this.rows.set(1);
+    this.cols.set(2);
+    this.cellWidth.set(1080);
+    this.cellHeight.set(1080);
+    this.selectedRatio.set(this.aspectRatios[0]);
+    this.isTransparent.set(true);
+  }
 }

@@ -8,7 +8,20 @@ import { ImageProcessorService } from '../services/image-processor.service';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="flex-1 overflow-y-auto p-4 lg:p-8 bg-gray-550 z-50 h-full">
+    <!-- Mobile Top Bar for Result View -->
+    <div class="lg:hidden absolute top-0 left-0 right-0 z-50 flex items-center justify-between p-4 bg-gray-950/80 backdrop-blur-md border-b border-gray-800">
+        <h1 class="text-xl font-black text-white/90 tracking-tighter select-none">GridSlice Free</h1>
+        <div class="flex items-center gap-2">
+           <button 
+             (click)="state.resetAll()" 
+             class="flex items-center gap-1.5 px-3 py-2 bg-gray-800 text-white/90 rounded-full border border-gray-700 active:scale-95 transition-transform text-xs font-bold">
+             <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+             新圖片
+           </button>
+        </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-4 lg:p-8 bg-gray-950 z-40 h-full pt-20 lg:pt-8">
         <div class="max-w-5xl mx-auto pb-20 lg:pb-0">
            <div class="flex flex-col gap-6 mb-6">
              <div>
@@ -23,7 +36,7 @@ import { ImageProcessorService } from '../services/image-processor.service';
                     下載全部 (ZIP)
                  </button>
                </div>
-               <p>可點擊下列圖片進行單張下載</p>
+               <p class="text-[10px] text-gray-500 text-center">可點擊下列圖片進行單張下載</p>
              </div>
            </div>
            
