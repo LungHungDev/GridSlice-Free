@@ -8,7 +8,7 @@ import { ImageProcessorService } from '../services/image-processor.service';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="flex-1 overflow-y-auto p-4 lg:p-8 bg-gray-950 z-50 h-full">
+    <div class="flex-1 overflow-y-auto p-4 lg:p-8 bg-gray-550 z-50 h-full">
         <div class="max-w-5xl mx-auto pb-20 lg:pb-0">
            <div class="flex flex-col gap-6 mb-6">
              <div>
@@ -23,6 +23,7 @@ import { ImageProcessorService } from '../services/image-processor.service';
                     下載全部 (ZIP)
                  </button>
                </div>
+               <p>可點擊下列圖片進行單張下載</p>
              </div>
            </div>
            

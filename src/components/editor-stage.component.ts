@@ -7,7 +7,8 @@ import { EditorStateService, ImageLayer } from '../services/editor-state.service
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="absolute inset-0 z-0 bg-gray-950 opacity-100 pointer-events-none">
+    <!-- Background: Gray with 0.5 opacity + Checkerboard -->
+    <div class="absolute inset-0 z-0 bg-gray-600/50 pointer-events-none">
         <div class="absolute inset-0 bg-checkerboard opacity-20"></div>
     </div>
 
@@ -15,6 +16,7 @@ import { EditorStateService, ImageLayer } from '../services/editor-state.service
     <div class="relative flex items-center justify-center w-full h-full p-4 lg:p-8 overflow-visible z-10 touch-none select-none"
          [style.transform]="'translate(' + state.viewTranslateX() + 'px, ' + state.viewTranslateY() + 'px)'"
          (mousedown)="onBgMouseDown($event)"
+         (wheel)="onWheel($event)"
          (touchstart)="onContainerTouchStart($event)"
          (touchmove)="onContainerTouchMove($event)"
          (touchend)="onContainerTouchEnd($event)">
@@ -132,8 +134,7 @@ export class EditorStageComponent implements OnDestroy {
   private resizeListener: () => void;
   private mouseMoveListener: (e: MouseEvent) => void;
   private mouseUpListener: (e: MouseEvent) => void;
-  private wheelListener: (e: WheelEvent) => void;
-
+  
   constructor() {
     this.resizeListener = () => {
         this.windowWidth.set(window.innerWidth);
@@ -143,11 +144,9 @@ export class EditorStageComponent implements OnDestroy {
 
     this.mouseMoveListener = (e) => this.globalMouseMove(e);
     this.mouseUpListener = (e) => this.globalMouseUp(e);
-    this.wheelListener = (e) => this.onWheel(e); // Attach wheel to window/host manually or template
 
     document.addEventListener('mousemove', this.mouseMoveListener);
     document.addEventListener('mouseup', this.mouseUpListener);
-    // Note: Wheel listener is typically attached to the host in template, handled there.
   }
 
   ngOnDestroy() {
@@ -197,7 +196,6 @@ export class EditorStageComponent implements OnDestroy {
   }
 
   onWheel(e: WheelEvent) {
-      // In template `(wheel)` call this
       e.preventDefault();
       const delta = e.deltaY * -0.001;
       const newZoom = Math.max(0.1, Math.min(2.0, this.state.viewZoom() + delta));
@@ -267,9 +265,6 @@ export class EditorStageComponent implements OnDestroy {
                   // Calculate new scale & Snap
                   let newScale = this.startLayerScale * scaleChange;
                   newScale = Math.max(0.05, Math.min(5.0, newScale));
-                  
-                  // Apply Snapping Logic (reusing logic but simplified here for brevity or inject helper)
-                  // For now, let's update.
                   
                   // Center Pivot Math
                   const currentPinchCenter = this.getCanvasPointFromTouches(e.touches);
