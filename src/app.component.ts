@@ -10,20 +10,21 @@ import { SplitterEditorComponent } from './components/splitter-editor.component'
   styles: []
 })
 export class AppComponent {
-  selectedFile = signal<File | null>(null);
-  imageUrl = signal<string | null>(null);
+  // We now store a list of files/urls to pass to the editor initially
+  initialFiles = signal<File[]>([]);
+  showEditor = signal(false);
 
   onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
-      this.processFile(input.files[0]);
+      this.processFiles(Array.from(input.files));
     }
   }
 
   onDrop(event: DragEvent) {
     event.preventDefault();
     if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
-      this.processFile(event.dataTransfer.files[0]);
+      this.processFiles(Array.from(event.dataTransfer.files));
     }
   }
 
@@ -31,23 +32,22 @@ export class AppComponent {
     event.preventDefault();
   }
 
-  processFile(file: File) {
-    if (!file.type.match(/image\/(png|jpeg|jpg)/)) {
+  processFiles(files: File[]) {
+    const validFiles = files.filter(f => f.type.match(/image\/(png|jpeg|jpg)/));
+    
+    if (validFiles.length === 0) {
       alert('不支援的檔案格式！\n請上傳 JPG, JPEG 或 PNG 圖片。');
       return;
     }
     
-    this.selectedFile.set(file);
-    
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      this.imageUrl.set(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+    // If editor is already open, we might want to handle it differently, 
+    // but for now, the main drop zone initializes the editor.
+    this.initialFiles.set(validFiles);
+    this.showEditor.set(true);
   }
 
   reset() {
-    this.selectedFile.set(null);
-    this.imageUrl.set(null);
+    this.initialFiles.set([]);
+    this.showEditor.set(false);
   }
 }
