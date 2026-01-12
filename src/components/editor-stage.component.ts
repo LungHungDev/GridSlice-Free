@@ -1,4 +1,4 @@
-import { Component, computed, signal, OnDestroy, inject, effect } from '@angular/core';
+import { Component, computed, signal, OnDestroy, inject, effect, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { EditorStateService, ImageLayer } from '../services/editor-state.service';
 
@@ -12,10 +12,12 @@ import { EditorStateService, ImageLayer } from '../services/editor-state.service
         <div class="absolute inset-0 bg-checkerboard opacity-20"></div>
     </div>
 
-    <!-- Interactive Container -->
+    <!-- Interactive Container (Wrapper for View Transform) -->
+    <!-- We keep the container approach for "View" pan/zoom to maintain inertia/interaction feel, 
+         but the content is now a single Canvas -->
     <div class="relative flex items-center justify-center w-full h-full p-4 lg:p-8 overflow-visible z-10 touch-none select-none"
          [style.transform]="'translate(' + state.viewTranslateX() + 'px, ' + state.viewTranslateY() + 'px)'"
-         (mousedown)="onBgMouseDown($event)"
+         (mousedown)="onMouseDown($event)"
          (wheel)="onWheel($event)"
          (touchstart)="onContainerTouchStart($event)"
          (touchmove)="onContainerTouchMove($event)"
@@ -28,37 +30,12 @@ import { EditorStateService, ImageLayer } from '../services/editor-state.service
           [style.height.px]="displayDims().height"
           [style.transform]="'scale(' + state.viewZoom() + ')'">
           
-          <!-- Canvas Background -->
-          <div class="absolute inset-0 z-0 bg-checkerboard"></div>
-          @if (!state.isTransparent()) {
-              <div class="absolute inset-0 z-0" [style.background-color]="state.backgroundColor()"></div>
-          }
+           <!-- The Main Rendering Canvas -->
+           <canvas #stageCanvas
+             class="absolute inset-0 w-full h-full block bg-checkerboard"
+           ></canvas>
 
-          <!-- Layers -->
-          <div class="absolute inset-0 z-10">
-              @for (layer of state.layers(); track layer.id) {
-                <div
-                    class="absolute origin-top-left will-change-transform"
-                    [class.ring-1]="state.activeLayerId() === layer.id"
-                    [class.ring-blue-400]="state.activeLayerId() === layer.id"
-                    [style.z-index]="layer.zIndex"
-                    [style.left.px]="layer.x * displayScale()"
-                    [style.top.px]="layer.y * displayScale()"
-                    [style.width.px]="layer.originalWidth * layer.scale * displayScale()"
-                    [style.height.px]="layer.originalHeight * layer.scale * displayScale()"
-                    (mousedown)="startDrag($event, layer.id)"
-                    (touchstart)="layerTouchStart($event, layer.id)">
-                     <img 
-                        [src]="layer.url" 
-                        class="w-full h-full object-contain pointer-events-none"
-                        [class.opacity-50]="state.activeLayerId() !== layer.id && state.activeLayerId() !== null"
-                        [class.opacity-100]="state.activeLayerId() === layer.id || state.activeLayerId() === null"
-                        alt="layer">
-                </div>
-              }
-          </div>
-
-           <!-- Grid Guides -->
+           <!-- Grid Guides (DOM Overlay for perfect hairline rendering independent of canvas aliasing) -->
            <div class="absolute inset-0 z-20 pointer-events-none shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] border border-white/20">
               @for (i of colArray(); track i) {
                 <div class="absolute top-0 bottom-0 border-l border-dashed border-white/60 shadow-[0_0_2px_black]" [style.left.%]="(i / state.cols()) * 100"></div>
@@ -75,8 +52,11 @@ import { EditorStateService, ImageLayer } from '../services/editor-state.service
     </div>
   `
 })
-export class EditorStageComponent implements OnDestroy {
+export class EditorStageComponent implements OnDestroy, AfterViewInit {
   state = inject(EditorStateService);
+
+  @ViewChild('stageCanvas') canvasRef!: ElementRef<HTMLCanvasElement>;
+  private ctx: CanvasRenderingContext2D | null = null;
 
   windowWidth = signal(window.innerWidth);
   windowHeight = signal(window.innerHeight);
@@ -117,7 +97,7 @@ export class EditorStageComponent implements OnDestroy {
   private dragStart = { x: 0, y: 0 };
   private dragLayerStart = { x: 0, y: 0 };
   private dragLayerId: string | null = null;
-  private potentialDragLayerId: string | null = null; // Touch specific
+  private potentialDragLayerId: string | null = null;
 
   // Touch State
   private isTouchZooming = false;
@@ -147,6 +127,25 @@ export class EditorStageComponent implements OnDestroy {
 
     document.addEventListener('mousemove', this.mouseMoveListener);
     document.addEventListener('mouseup', this.mouseUpListener);
+
+    // Render Loop Effect
+    effect(() => {
+      // Subscribe to signals that affect rendering
+      const layers = this.state.layers();
+      const activeId = this.state.activeLayerId();
+      const dims = this.displayDims();
+      const scale = this.displayScale();
+      const bg = this.state.backgroundColor();
+      const transparent = this.state.isTransparent();
+      
+      // Trigger Draw
+      requestAnimationFrame(() => this.draw());
+    });
+  }
+
+  ngAfterViewInit() {
+    this.ctx = this.canvasRef.nativeElement.getContext('2d', { alpha: true });
+    this.draw();
   }
 
   ngOnDestroy() {
@@ -155,24 +154,118 @@ export class EditorStageComponent implements OnDestroy {
     document.removeEventListener('mouseup', this.mouseUpListener);
   }
 
-  // --- MOUSE Interaction ---
+  // --- RENDERING CORE ---
 
-  onBgMouseDown(e: MouseEvent) {
-    this.state.activeLayerId.set(null);
-    this.isViewDragging = true;
+  private draw() {
+    if (!this.ctx || !this.canvasRef) return;
+    
+    const canvas = this.canvasRef.nativeElement;
+    const dims = this.displayDims();
+    const dpr = window.devicePixelRatio || 1;
+    
+    // Resize canvas to match display dims * DPR for sharpness
+    // We only resize if dimensions changed to avoid clearing too often
+    const targetW = Math.floor(dims.width * dpr);
+    const targetH = Math.floor(dims.height * dpr);
+    
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+
+    const ctx = this.ctx;
+    
+    // Reset Context
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Scale Context for DPR and DisplayScale
+    ctx.scale(dpr * this.displayScale(), dpr * this.displayScale());
+
+    // 1. Draw Background Color (if not transparent)
+    if (!this.state.isTransparent()) {
+      ctx.fillStyle = this.state.backgroundColor();
+      ctx.fillRect(0, 0, this.state.totalWidth(), this.state.totalHeight());
+    }
+
+    // 2. Draw Layers
+    const layers = this.state.layers().sort((a, b) => a.zIndex - b.zIndex);
+    const activeId = this.state.activeLayerId();
+
+    layers.forEach(layer => {
+      // Draw Image
+      const width = layer.originalWidth * layer.scale;
+      const height = layer.originalHeight * layer.scale;
+      
+      ctx.save();
+      // Optional: Add drop shadow for better visibility against dark background? 
+      // Maybe not for the final output, but for editor it helps. keeping it simple for now.
+      
+      // Opacity for inactive layers logic (from previous html)
+      if (activeId !== null && activeId !== layer.id) {
+        ctx.globalAlpha = 0.5;
+      } else {
+        ctx.globalAlpha = 1.0;
+      }
+      
+      ctx.drawImage(layer.imgElement, layer.x, layer.y, width, height);
+
+      // Draw Selection Outline
+      if (activeId === layer.id) {
+        ctx.strokeStyle = '#60a5fa'; // blue-400
+        ctx.lineWidth = 2 / this.displayScale(); // Keep line width constant on screen
+        ctx.strokeRect(layer.x, layer.y, width, height);
+      }
+      
+      ctx.restore();
+    });
   }
 
-  startDrag(e: MouseEvent, id: string) {
-    e.preventDefault();
-    e.stopPropagation();
-    this.state.activeLayerId.set(id);
-    this.dragLayerId = id;
-    this.isLayerDragging = true;
+  // --- HIT DETECTION ---
+  
+  /**
+   * Returns the top-most layer ID at the given canvas coordinates.
+   */
+  private hitTest(x: number, y: number): string | null {
+    // Reverse iterate (Top to Bottom)
+    const layers = [...this.state.layers()].sort((a, b) => b.zIndex - a.zIndex);
     
-    const layer = this.state.layers().find(l => l.id === id);
-    if (layer) {
+    for (const layer of layers) {
+      const width = layer.originalWidth * layer.scale;
+      const height = layer.originalHeight * layer.scale;
+      
+      // Simple Rectangle Hit Test
+      if (x >= layer.x && x <= layer.x + width &&
+          y >= layer.y && y <= layer.y + height) {
+        return layer.id;
+      }
+    }
+    return null;
+  }
+
+  // --- MOUSE Interaction ---
+
+  onMouseDown(e: MouseEvent) {
+    // 1. Calculate Click Position in World Coordinates
+    const coords = this.getPointerWorldPos(e.clientX, e.clientY);
+    
+    // 2. Hit Test
+    const hitId = this.hitTest(coords.x, coords.y);
+    
+    if (hitId) {
+      // Hit a layer -> Start Dragging Layer
+      e.preventDefault();
+      e.stopPropagation();
+      this.state.activeLayerId.set(hitId);
+      this.dragLayerId = hitId;
+      this.isLayerDragging = true;
       this.dragStart = { x: e.clientX, y: e.clientY };
+      const layer = this.state.layers().find(l => l.id === hitId)!;
       this.dragLayerStart = { x: layer.x, y: layer.y };
+    } else {
+      // Hit Background -> Start Panning View
+      this.state.activeLayerId.set(null);
+      this.isViewDragging = true;
     }
   }
 
@@ -204,46 +297,52 @@ export class EditorStageComponent implements OnDestroy {
 
   // --- TOUCH Interaction ---
 
-  layerTouchStart(e: TouchEvent, id: string) {
-      this.potentialDragLayerId = id;
-      this.state.activeLayerId.set(id);
-  }
-
   onContainerTouchStart(e: TouchEvent) {
-    if (e.touches.length === 2) {
+    e.preventDefault(); // Prevent defaults on canvas
+    
+    if (e.touches.length === 1) {
+       const touch = e.touches[0];
+       const coords = this.getPointerWorldPos(touch.clientX, touch.clientY);
+       const hitId = this.hitTest(coords.x, coords.y);
+       
+       if (hitId) {
+          // Drag Layer Start
+          this.potentialDragLayerId = hitId;
+          this.state.activeLayerId.set(hitId);
+          this.isTouchDraggingLayer = true;
+          this.dragLayerId = hitId;
+          this.dragStart = { x: touch.clientX, y: touch.clientY };
+          const layer = this.state.layers().find(l => l.id === hitId)!;
+          this.dragLayerStart = { x: layer.x, y: layer.y };
+       } else {
+          // Pan View Start
+          this.state.activeLayerId.set(null);
+          this.isTouchPanning = true;
+          this.touchStartCoords = { x: touch.clientX - this.state.viewTranslateX(), y: touch.clientY - this.state.viewTranslateY() };
+       }
+    } else if (e.touches.length === 2) {
        // Pinch Start
        this.isTouchZooming = true;
        this.isTouchPanning = false;
        this.isTouchDraggingLayer = false;
        this.lastPinchDistance = this.getDistance(e.touches);
-
-       if (this.potentialDragLayerId) {
+       
+       // Check if pinching on a layer or empty space
+       const coords = this.getCanvasPointFromTouches(e.touches); // This is canvas relative
+       // We need World Coords for Hit Test, but getCanvasPoint returns internal canvas logic. 
+       // Simpler: Just check if we had a selected layer before pinch
+       if (this.state.activeLayerId()) {
+         this.potentialDragLayerId = this.state.activeLayerId();
          this.zoomTarget = 'layer';
          const layer = this.state.layers().find(l => l.id === this.potentialDragLayerId);
          if (layer) {
              this.startLayerScale = layer.scale;
              this.layerPosStart = { x: layer.x, y: layer.y };
-             this.pinchCenterStart = this.getCanvasPointFromTouches(e.touches);
+             this.pinchCenterStart = coords;
          }
        } else {
          this.zoomTarget = 'view';
          this.startZoom = this.state.viewZoom();
-       }
-    } else if (e.touches.length === 1) {
-       const touch = e.touches[0];
-       if (this.potentialDragLayerId) {
-          // Drag Layer Start
-          this.isTouchDraggingLayer = true;
-          this.dragLayerId = this.potentialDragLayerId;
-          const layer = this.state.layers().find(l => l.id === this.dragLayerId);
-          if (layer) {
-             this.dragStart = { x: touch.clientX, y: touch.clientY };
-             this.dragLayerStart = { x: layer.x, y: layer.y };
-          }
-       } else {
-          // Pan View Start
-          this.isTouchPanning = true;
-          this.touchStartCoords = { x: touch.clientX - this.state.viewTranslateX(), y: touch.clientY - this.state.viewTranslateY() };
        }
     }
   }
@@ -309,11 +408,37 @@ export class EditorStageComponent implements OnDestroy {
     }
   }
 
-  // --- Maths Helpers ---
+  // --- Coordinate Helpers ---
+
+  /**
+   * Converts client (screen) coordinates to "World" (Canvas internal) coordinates.
+   */
+  private getPointerWorldPos(clientX: number, clientY: number) {
+     if (!this.canvasRef) return { x: 0, y: 0 };
+     
+     const rect = this.canvasRef.nativeElement.getBoundingClientRect();
+     // Relative to canvas element top-left
+     const relX = clientX - rect.left;
+     const relY = clientY - rect.top;
+     
+     // Correct for Display Scale (The canvas is sized to displayDims, but internal logic is TotalWidth)
+     // Actually, in draw(), we scale by displayScale.
+     // So raw coord / displayScale = World Coord
+     const worldX = relX / this.displayScale();
+     const worldY = relY / this.displayScale();
+     
+     return { x: worldX, y: worldY };
+  }
 
   private handleLayerDrag(dxScreen: number, dyScreen: number) {
      if (!this.dragLayerId) return;
      
+     // Note: e.movementX is screen pixels.
+     // To get world pixels, we divide by (displayScale * viewZoom)
+     // Wait, the canvas element is SCALED by CSS `viewZoom`.
+     // So the bounding rect accounts for viewZoom.
+     
+     // Logic from before:
      const scale = this.displayScale() * this.state.viewZoom();
      const dx = dxScreen / scale;
      const dy = dyScreen / scale;
@@ -367,24 +492,10 @@ export class EditorStageComponent implements OnDestroy {
   }
 
   private getCanvasPointFromTouches(touches: TouchList) {
+      // This helper calculates the center point in World Coordinates
      const screenX = (touches[0].clientX + touches[1].clientX) / 2;
      const screenY = (touches[0].clientY + touches[1].clientY) / 2;
      
-     const winW = this.windowWidth();
-     const winH = this.windowHeight();
-     const cx = winW / 2;
-     const cy = winH / 2;
-     
-     const originX = cx + this.state.viewTranslateX();
-     const originY = cy + this.state.viewTranslateY();
-     
-     const dims = this.displayDims();
-     const canvasLeft = originX - (dims.width / 2);
-     const canvasTop = originY - (dims.height / 2);
-     
-     const relX = (screenX - canvasLeft) / this.state.viewZoom();
-     const relY = (screenY - canvasTop) / this.state.viewZoom();
-     
-     return { x: relX / this.displayScale(), y: relY / this.displayScale() };
+     return this.getPointerWorldPos(screenX, screenY);
   }
 }
