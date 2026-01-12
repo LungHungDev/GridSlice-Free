@@ -83,9 +83,12 @@ type MobileTab = 'layout' | 'layers' | 'settings' | null;
         <!-- The Editor Stage -->
         @if (!generatedSlices().length) {
           
-          <div class="flex-1 relative overflow-hidden flex items-center justify-center bg-gray-900 select-none cursor-grab active:cursor-grabbing"
+          <div class="flex-1 relative overflow-hidden flex items-center justify-center bg-gray-900 select-none cursor-grab active:cursor-grabbing touch-none"
                (mousedown)="bgMouseDown($event)"
-               (wheel)="onWheelZoom($event)">
+               (wheel)="onWheelZoom($event)"
+               (touchstart)="onContainerTouchStart($event)"
+               (touchmove)="onContainerTouchMove($event)"
+               (touchend)="onContainerTouchEnd($event)">
                
             <!-- Mobile Backdrop for Drawer -->
             @if (activeMobileTab() && windowWidth() < 1024) {
@@ -93,7 +96,9 @@ type MobileTab = 'layout' | 'layers' | 'settings' | null;
             }
             
             <!-- This container centers the canvas visualization -->
-            <div class="relative flex items-center justify-center w-full h-full p-4 lg:p-8 overflow-hidden">
+            <!-- Use transform translate for panning + scale for zooming -->
+            <div class="relative flex items-center justify-center w-full h-full p-4 lg:p-8 overflow-visible"
+                 [style.transform]="'translate(' + viewTranslateX() + 'px, ' + viewTranslateY() + 'px)'">
             
                 <!-- The Reference Frame (The Canvas) -->
                 <div 
@@ -121,7 +126,7 @@ type MobileTab = 'layout' | 'layers' | 'settings' | null;
                             [style.width.px]="layer.originalWidth * layer.scale * displayScale()"
                             [style.height.px]="layer.originalHeight * layer.scale * displayScale()"
                             (mousedown)="startDrag($event, layer.id)"
-                            (touchstart)="startTouch($event, layer.id)">
+                            (touchstart)="layerTouchStart($event, layer.id)">
                              <img 
                                 [src]="layer.url" 
                                 class="w-full h-full object-contain pointer-events-none"
@@ -165,7 +170,7 @@ type MobileTab = 'layout' | 'layers' | 'settings' | null;
             @if (!activeMobileTab()) {
                 <div class="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none z-20">
                     <div class="text-[10px] lg:text-xs text-gray-400 bg-gray-900/90 px-4 py-1.5 rounded-full backdrop-blur border border-gray-700 shadow-xl">
-                    滑鼠滾輪/手勢縮放視野 • 拖曳圖片可超出範圍
+                    手機雙指縮放 • 單指拖曳圖片/背景移動視野
                     </div>
                 </div>
             }
@@ -511,6 +516,8 @@ export class SplitterEditorComponent implements OnDestroy {
 
   // View Control
   viewZoom = signal(1.0);
+  viewTranslateX = signal(0);
+  viewTranslateY = signal(0);
 
   aspectRatios: AspectRatioOption[] = [
     { label: '1:1', w: 1, h: 1 },
@@ -783,6 +790,8 @@ export class SplitterEditorComponent implements OnDestroy {
 
   resetViewZoom() {
     this.viewZoom.set(1.0);
+    this.viewTranslateX.set(0);
+    this.viewTranslateY.set(0);
   }
 
   onWheelZoom(e: WheelEvent) {
@@ -833,7 +842,7 @@ export class SplitterEditorComponent implements OnDestroy {
       });
   }
 
-  // --- Interaction Logic ---
+  // --- Interaction Logic (Mouse) ---
   isDragging = false;
   dragStart = { x: 0, y: 0 };
   dragLayerStart = { x: 0, y: 0 };
@@ -873,41 +882,125 @@ export class SplitterEditorComponent implements OnDestroy {
     document.addEventListener('mouseup', mouseUp);
   }
 
-  startTouch(e: TouchEvent, id: string) {
-    e.stopPropagation();
-    if (e.touches.length !== 1) return;
-    
+  // --- Interaction Logic (Touch - Integrated) ---
+
+  // State for Touch Interactions
+  isTouchDraggingLayer = false;
+  isTouchPanning = false;
+  isTouchZooming = false;
+  
+  touchStartCoords = { x: 0, y: 0 }; // For Panning
+  touchStartLayerCoords = { x: 0, y: 0 }; // For Layer Drag
+  lastPinchDistance = 0;
+  startZoom = 1;
+  
+  // This helps identify if a touch started on a layer
+  potentialDragLayerId: string | null = null;
+
+  layerTouchStart(e: TouchEvent, id: string) {
+    // We don't stop propagation here. We just mark which layer was touched.
+    // The container's touchstart will make the decision.
+    this.potentialDragLayerId = id;
     this.activeLayerId.set(id);
-    this.dragLayerId = id;
-    this.isDragging = true;
-    
-    const layer = this.layers().find(l => l.id === id);
-    if (!layer) return;
+  }
 
-    this.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    this.dragLayerStart = { x: layer.x, y: layer.y };
-    
-    const touchMove = (ev: TouchEvent) => {
-        if (!this.isDragging || !this.dragLayerId) return;
-        ev.preventDefault();
-        const dx = ev.touches[0].clientX - this.dragStart.x;
-        const dy = ev.touches[0].clientY - this.dragStart.y;
-        this.handleDragMove(dx, dy);
-    };
+  onContainerTouchStart(e: TouchEvent) {
+    // If we have 2 touches, we enter ZOOM mode immediately
+    if (e.touches.length === 2) {
+       this.isTouchZooming = true;
+       this.isTouchPanning = false;
+       this.isTouchDraggingLayer = false;
+       this.lastPinchDistance = this.getDistance(e.touches);
+       this.startZoom = this.viewZoom();
+       return;
+    }
 
-    const touchEnd = () => {
-       this.isDragging = false;
+    if (e.touches.length === 1) {
+       const touch = e.touches[0];
+       
+       // If potentialDragLayerId is set, it means the touch went through an image first
+       if (this.potentialDragLayerId) {
+          this.isTouchDraggingLayer = true;
+          this.dragLayerId = this.potentialDragLayerId;
+          const layer = this.layers().find(l => l.id === this.dragLayerId);
+          if (layer) {
+             this.dragStart = { x: touch.clientX, y: touch.clientY };
+             this.dragLayerStart = { x: layer.x, y: layer.y };
+          }
+       } else {
+          // Touched background -> Pan Mode
+          this.isTouchPanning = true;
+          this.touchStartCoords = { x: touch.clientX - this.viewTranslateX(), y: touch.clientY - this.viewTranslateY() };
+          
+          // Also allow closing menu if tapping bg
+          if (this.windowWidth() < 1024) {
+             this.closeMobileMenu();
+          }
+       }
+    }
+  }
+
+  onContainerTouchMove(e: TouchEvent) {
+    // 1. Pinch Zoom
+    if (this.isTouchZooming && e.touches.length === 2) {
+       e.preventDefault(); // Prevent browser zoom
+       const currentDist = this.getDistance(e.touches);
+       if (this.lastPinchDistance > 0) {
+          const scale = currentDist / this.lastPinchDistance;
+          const newZoom = Math.max(0.1, Math.min(2.0, this.startZoom * scale));
+          this.viewZoom.set(newZoom);
+       }
+       return;
+    }
+
+    // 2. Layer Drag
+    if (this.isTouchDraggingLayer && e.touches.length === 1 && this.dragLayerId) {
+       e.preventDefault(); // Prevent scrolling
+       const touch = e.touches[0];
+       const dx = touch.clientX - this.dragStart.x;
+       const dy = touch.clientY - this.dragStart.y;
+       this.handleDragMove(dx, dy);
+       return;
+    }
+
+    // 3. Pan View
+    if (this.isTouchPanning && e.touches.length === 1) {
+       e.preventDefault(); // Prevent browser swipe nav
+       const touch = e.touches[0];
+       const newX = touch.clientX - this.touchStartCoords.x;
+       const newY = touch.clientY - this.touchStartCoords.y;
+       this.viewTranslateX.set(newX);
+       this.viewTranslateY.set(newY);
+    }
+  }
+
+  onContainerTouchEnd(e: TouchEvent) {
+    if (e.touches.length === 0) {
+       this.isTouchPanning = false;
+       this.isTouchDraggingLayer = false;
+       this.isTouchZooming = false;
        this.dragLayerId = null;
+       this.potentialDragLayerId = null;
        this.isSnappingX.set(false);
        this.isSnappingY.set(false);
-       document.removeEventListener('touchmove', touchMove);
-       document.removeEventListener('touchend', touchEnd);
-    };
+    } else if (e.touches.length === 1 && this.isTouchZooming) {
+       // Transition from zoom back to something else? 
+       // Usually best to just stop interaction until lift all fingers to avoid jumps
+       this.isTouchZooming = false;
+    }
+  }
 
-    document.addEventListener('touchmove', touchMove, { passive: false });
-    document.addEventListener('touchend', touchEnd);
+  startTouch(e: TouchEvent, id: string) {
+    // This is legacy/fallback, logic moved to onContainerTouchStart
+    // Kept empty or minimal to avoid breaking if template wasn't fully updated
   }
   
+  getDistance(touches: TouchList) {
+     const dx = touches[0].clientX - touches[1].clientX;
+     const dy = touches[0].clientY - touches[1].clientY;
+     return Math.hypot(dx, dy);
+  }
+
   handleDragMove(dxScreen: number, dyScreen: number) {
     if (!this.dragLayerId) return;
     
